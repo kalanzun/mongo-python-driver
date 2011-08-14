@@ -38,13 +38,13 @@ class CursorManager(object):
     def close(self, cursor_id):
         """Close a cursor by killing it immediately.
 
-        Raises TypeError if cursor_id is not an instance of (int, long).
+        Raises TypeError if cursor_id is not an instance of int.
 
         :Parameters:
           - `cursor_id`: cursor id to close
         """
-        if not isinstance(cursor_id, (int, long)):
-            raise TypeError("cursor_id must be an instance of (int, long)")
+        if not isinstance(cursor_id, int):
+            raise TypeError("cursor_id must be an instance of int")
 
         self.__connection().kill_cursors([cursor_id])
 
@@ -73,13 +73,13 @@ class BatchCursorManager(CursorManager):
     def close(self, cursor_id):
         """Close a cursor by killing it in a batch.
 
-        Raises TypeError if cursor_id is not an instance of (int, long).
+        Raises TypeError if cursor_id is not an instance of int.
 
         :Parameters:
           - `cursor_id`: cursor id to close
         """
-        if not isinstance(cursor_id, (int, long)):
-            raise TypeError("cursor_id must be an instance of (int, long)")
+        if not isinstance(cursor_id, int):
+            raise TypeError("cursor_id must be an instance of int")
 
         self.__dying_cursors.append(cursor_id)
 

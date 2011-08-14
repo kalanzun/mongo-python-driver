@@ -28,7 +28,7 @@ def validate_boolean(option, value):
     """
     if isinstance(value, bool):
         return value
-    elif isinstance(value, basestring):
+    elif isinstance(value, str):
         if value not in ('true', 'false'):
             raise ConfigurationError("The value of '%s' must be "
                                      "'true' or 'false'" % (option,))
@@ -40,9 +40,9 @@ def validate_boolean(option, value):
 def validate_integer(option, value):
     """Validates that 'value' is an integer.
     """
-    if isinstance(value, (int, long)):
+    if isinstance(value, int):
         return value
-    elif isinstance(value, basestring):
+    elif isinstance(value, str):
         if not value.isdigit():
             raise ConfigurationError("The value of '%s' must be "
                                      "an integer." % (option,))
@@ -51,10 +51,10 @@ def validate_integer(option, value):
                     "integer or string representation" % (option,))
 
 
-def validate_basestring(option, value):
-    """Validates that 'value' is an instance of `basestring`.
+def validate_string(option, value):
+    """Validates that 'value' is an instance of `str`.
     """
-    if isinstance(value, basestring):
+    if isinstance(value, str):
         return value
     raise TypeError("Wrong type for %s, value just be an "
                     "instance of basestring" % (option,))
@@ -63,7 +63,7 @@ def validate_basestring(option, value):
 # jounal is an alias for j,
 # wtimeoutms is an alias for wtimeout
 VALIDATORS = { 
-    'replicaset': validate_basestring,
+    'replicaset': validate_string,
     'slaveok': validate_boolean,
     'safe': validate_boolean,
     'w': validate_integer,
@@ -120,7 +120,7 @@ class BaseObject(object):
 
     def _set_options(self, **options):
         """Validates and sets all options passed to this object."""
-        for option, value in options.iteritems():
+        for option, value in options.items():
             if option in ('slave_okay', 'slaveok'):
                 self.slave_okay = value
             elif option == 'safe':
@@ -179,7 +179,7 @@ class BaseObject(object):
 
         .. versionadded:: 2.0
         """
-        for key, value in kwargs.iteritems():
+        for key, value in kwargs.items():
             self.__set_safe_option(key, value)
 
     def unset_lasterror_options(self, *options):
