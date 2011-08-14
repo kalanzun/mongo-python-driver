@@ -134,10 +134,11 @@ class Collection(common.BaseObject):
     def __repr__(self):
         return "Collection(%r, %r)" % (self.__database, self.__name)
 
-    def __cmp__(self, other):
+    def __eq__(self, other):
         if isinstance(other, Collection):
-            return cmp((self.__database, self.__name),
-                       (other.__database, other.__name))
+            mytuple = (self.__database, self.__name)
+            othertuple = (other.__database, other.__name)
+            return mytuple == othertuple
         return NotImplemented
 
     @property

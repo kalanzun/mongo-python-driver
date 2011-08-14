@@ -168,10 +168,11 @@ class Database(common.BaseObject):
         return [manipulator.__class__.__name__
                 for manipulator in self.__outgoing_copying_manipulators]
 
-    def __cmp__(self, other):
+    def __eq__(self, other):
         if isinstance(other, Database):
-            return cmp((self.__connection, self.__name),
-                       (other.__connection, other.__name))
+            mytuple = (self.__connection, self.__name)
+            othertuple = (other.__connection, other.__name)
+            return mytuple == othertuple
         return NotImplemented
 
     def __repr__(self):
