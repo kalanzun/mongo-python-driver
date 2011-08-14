@@ -1,15 +1,12 @@
 #!/usr/bin/env python
 
+from warnings import warn
 import sys
 import os
-try:
-    import subprocess
-    has_subprocess = True
-except:
-    has_subprocess = False
+import subprocess
 import shutil
 
-from ez_setup import use_setuptools
+from distribute_setup import use_setuptools
 use_setuptools()
 from setuptools import setup
 from setuptools import Feature
@@ -61,21 +58,13 @@ class doc(Command):
             except:
                 pass
 
-        if has_subprocess:
-            status = subprocess.call(["sphinx-build", "-E", "-b", mode, "doc", path])
+        status = subprocess.call(["sphinx-build", "-E", "-b", mode, "doc", path])
 
-            if status:
-                raise RuntimeError("documentation step '%s' failed" % mode)
+        if status:
+            raise RuntimeError("documentation step '%s' failed" % mode)
 
-            print ""
-            print "Documentation step '%s' performed, results here:" % mode
-            print "   %s/" % path
-        else:
-            print """
-`setup.py doc` is not supported for this version of Python.
-
-Please ask in the user forums for help.
-"""
+        sys.stdout.write("\nDocumentation step '%s' performed, results here:\n"
+                         "   %s/\n" % (mode, path))
 
 
 if sys.platform == 'win32' and sys.version_info > (2, 6):
@@ -114,27 +103,20 @@ Debian/Ubuntu: python-dev
     def run(self):
         try:
             build_ext.run(self)
-        except DistutilsPlatformError, e:
-            print e
-            print self.warning_message % ("Extension modules",
-                                          "There was an issue with your "
-                                          "platform configuration "
-                                          "- see above.")
+        except DistutilsPlatformError:
+            e = sys.exc_info()[1]
+            sys.stdout.write('%s\n' % e)
+            warn(self.warning_message % ("Extension modules",
+                                         "There was an issue with your "
+                                         "platform configuration - see above."))
 
     def build_extension(self, ext):
-        if sys.version_info[:3] >= (2, 4, 0):
-            try:
-                build_ext.build_extension(self, ext)
-            except build_errors, e:
-                print e
-                print self.warning_message % ("The %s extension "
-                                              "module" % ext.name,
-                                              "Above is the ouput showing how "
-                                              "the compilation failed.")
-        else:
-            print self.warning_message % ("The %s extension module" % ext.name,
-                                          "Please use Python >= 2.4 to take "
-                                          "advantage of the extension.")
+        try:
+            build_ext.build_extension(self, ext)
+        except build_errors:
+            warn(self.warning_message % ("The %s extension module" % ext.name,
+                                         "Above is the ouput showing how "
+                                         "the compilation failed."))
 
 c_ext = Feature(
     "optional C extensions",
@@ -154,13 +136,13 @@ if "--no_ext" in sys.argv:
     sys.argv = [x for x in sys.argv if x != "--no_ext"]
     features = {}
 elif sys.byteorder == "big":
-    print """
-*****************************************************
-The optional C extensions are currently not supported
-on big endian platforms and will not be built.
-Performance may be degraded.
-*****************************************************
-"""
+    sys.stdout.write("""
+*****************************************************\n
+The optional C extensions are currently not supported\n
+on big endian platforms and will not be built.\n
+Performance may be degraded.\n
+*****************************************************\n
+""")
     features = {}
 else:
     features = {"c-ext": c_ext}
@@ -178,9 +160,11 @@ setup(
     keywords=["mongo", "mongodb", "pymongo", "gridfs", "bson"],
     packages=["bson", "pymongo", "gridfs"],
     install_requires=[],
-    features=features,
-    license="Apache License, Version 2.0",
+    tests_require=['nose'],
     test_suite="nose.collector",
+    features=features,
+    use_2to3=False,
+    license="Apache License, Version 2.0",
     classifiers=[
         "Development Status :: 5 - Production/Stable",
         "Intended Audience :: Developers",
