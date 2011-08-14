@@ -79,7 +79,7 @@ class SON(dict):
         return "SON([%s])" % ", ".join(result)
 
     def __setitem__(self, key, value):
-        if key not in self:
+        if key not in self.__keys:
             self.__keys.append(key)
         dict.__setitem__(self, key, value)
 
@@ -88,48 +88,29 @@ class SON(dict):
         dict.__delitem__(self, key)
 
     def keys(self):
-        return list(self.__keys)
-
-    def copy(self):
-        other = SON()
-        other.update(self)
-        return other
-
-    # TODO this is all from UserDict.DictMixin. it could probably be made more
-    # efficient.
-    # second level definitions support higher levels
-    def __iter__(self):
-        for k in self.keys():
+        for k in self.__keys:
             yield k
 
-    def has_key(self, key):
-        return key in self.keys()
+    def copy(self):
+        return SON(self)
+
+    def __iter__(self):
+        return self.keys()
 
     def __contains__(self, key):
-        return key in self.keys()
-
-    # third level takes advantage of second level definitions
-    def iteritems(self):
-        for k in self:
-            yield (k, self[k])
-
-    def iterkeys(self):
-        return self.__iter__()
-
-    # fourth level uses definitions from lower levels
-    def itervalues(self):
-        for _, v in self.iteritems():
-            yield v
-
-    def values(self):
-        return [v for _, v in self.iteritems()]
+        return key in self.__keys
 
     def items(self):
-        return list(self.iteritems())
+        for k in self.__keys:
+            yield (k, self[k])
+
+    def values(self):
+        for k in self.__keys:
+            yield self[k]
 
     def clear(self):
-        for key in self.keys():
-            del self[key]
+        dict.clear(self)
+        self.__keys = list()
 
     def setdefault(self, key, default=None):
         try:
@@ -153,7 +134,7 @@ class SON(dict):
 
     def popitem(self):
         try:
-            k, v = self.iteritems().next()
+            k, v = self.items().next()
         except StopIteration:
             raise KeyError('container is empty')
         del self[k]
@@ -163,8 +144,8 @@ class SON(dict):
         # Make progressively weaker assumptions about "other"
         if other is None:
             pass
-        elif hasattr(other, 'iteritems'):  # iteritems saves memory and lookups
-            for k, v in other.iteritems():
+        elif hasattr(other, 'items'):
+            for k, v in other.items():
                 self[k] = v
         elif hasattr(other, 'keys'):
             for k in other.keys():
@@ -182,7 +163,7 @@ class SON(dict):
             return default
 
     def __len__(self):
-        return len(self.keys())
+        return len(self.__keys)
 
     def to_dict(self):
         """Convert a SON document to a normal Python dictionary instance.
@@ -197,7 +178,7 @@ class SON(dict):
             if isinstance(value, SON):
                 value = dict(value)
             if isinstance(value, dict):
-                for k, v in value.iteritems():
+                for k, v in value.items():
                     value[k] = transform_value(v)
             return value
 
@@ -205,6 +186,6 @@ class SON(dict):
 
     def __deepcopy__(self, memo):
         out = SON()
-        for k, v in self.iteritems():
+        for k, v in self.items():
             out[k] = copy.deepcopy(v, memo)
         return out
