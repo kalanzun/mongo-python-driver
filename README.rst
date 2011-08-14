@@ -1,12 +1,13 @@
-=======
-PyMongo
-=======
+========
+PyMongo3
+========
 :Info: See `the mongo site <http://www.mongodb.org>`_ for more information. See `github <http://github.com/mongodb/mongo-python-driver/tree>`_ for the latest source.
-:Author: Mike Dirolf
-:Maintainer: Bernie Hackett <bernie@10gen.com>
 
 About
 =====
+
+This is an unofficial port of PyMongo 2.0 to Python 3.1 or later.
+gridfs and its tests are not ported yet! bson and pymongo are working.
 
 The PyMongo distribution contains tools for interacting with MongoDB
 database from Python.  The ``bson`` package is an implementation of
@@ -29,18 +30,13 @@ get an answer on the list.
 Installation
 ============
 
-If you have `setuptools
-<http://peak.telecommunity.com/DevCenter/setuptools>`_ installed you
-should be able to do **easy_install pymongo** to install
-PyMongo. Otherwise you can download the project source and do **python
+You can download the project source and do **python
 setup.py install** to install.
 
 Dependencies
 ============
 
-The PyMongo distribution is supported and tested on Python 2.x, where
-x >= 4. PyMongo versions <= 1.3 also supported Python 2.3, but that is
-no longer supported. If you need to use Python 2.3 please contact us.
+PyMongo3 needs Python 3.x where x >= 1.
 
 Additional dependencies are:
 
@@ -54,10 +50,10 @@ Here's a basic example (for more see the *examples* section of the docs):
 >>> import pymongo
 >>> connection = pymongo.Connection("localhost", 27017)
 >>> db = connection.test
->>> db.name()
-u'test'
+>>> db.name
+'test'
 >>> db.my_collection
-Collection(Database(Connection('localhost', 27017), u'test'), u'my_collection')
+Collection(Database(Connection('localhost', 27017), 'test'), 'my_collection')
 >>> db.my_collection.save({"x": 10})
 ObjectId('4aba15ebe23f6b53b0000000')
 >>> db.my_collection.save({"x": 8})
@@ -65,17 +61,17 @@ ObjectId('4aba160ee23f6b543e000000')
 >>> db.my_collection.save({"x": 11})
 ObjectId('4aba160ee23f6b543e000002')
 >>> db.my_collection.find_one()
-{u'x': 10, u'_id': ObjectId('4aba15ebe23f6b53b0000000')}
+{'x': 10, '_id': ObjectId('4aba15ebe23f6b53b0000000')}
 >>> for item in db.my_collection.find():
-...     print item["x"]
+...     print(item["x"])
 ...
 10
 8
 11
 >>> db.my_collection.create_index("x")
-u'x_1'
+'x_1'
 >>> for item in db.my_collection.find().sort("x", pymongo.ASCENDING):
-...     print item["x"]
+...     print(item["x"])
 ...
 8
 10
