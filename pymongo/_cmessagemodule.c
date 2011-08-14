@@ -29,12 +29,7 @@ struct module_state {
     PyObject* _cbson;
 };
 
-#if PY_MAJOR_VERSION >= 3
 #define GETSTATE(m) ((struct module_state*)PyModule_GetState(m))
-#else
-#define GETSTATE(m) (&_state)
-static struct module_state _state;
-#endif
 
 /* Get an error class from the pymongo.errors module.
  *
@@ -212,7 +207,7 @@ static PyObject* _cbson_insert_message(PyObject* self, PyObject* args) {
     }
 
     /* objectify buffer */
-    result = Py_BuildValue("is#i", request_id,
+    result = Py_BuildValue("iy#i", request_id,
                            buffer_get_buffer(buffer),
                            buffer_get_position(buffer),
                            max_size);
@@ -314,7 +309,7 @@ static PyObject* _cbson_update_message(PyObject* self, PyObject* args) {
     }
 
     /* objectify buffer */
-    result = Py_BuildValue("is#i", request_id,
+    result = Py_BuildValue("iy#i", request_id,
                            buffer_get_buffer(buffer),
                            buffer_get_position(buffer),
                            max_size);
@@ -399,7 +394,7 @@ static PyObject* _cbson_query_message(PyObject* self, PyObject* args) {
     memcpy(buffer_get_buffer(buffer) + length_location, &message_length, 4);
 
     /* objectify buffer */
-    result = Py_BuildValue("is#i", request_id,
+    result = Py_BuildValue("iy#i", request_id,
                            buffer_get_buffer(buffer),
                            buffer_get_position(buffer),
                            max_size);
@@ -463,7 +458,7 @@ static PyObject* _cbson_get_more_message(PyObject* self, PyObject* args) {
     memcpy(buffer_get_buffer(buffer) + length_location, &message_length, 4);
 
     /* objectify buffer */
-    result = Py_BuildValue("is#", request_id,
+    result = Py_BuildValue("iy#", request_id,
                            buffer_get_buffer(buffer),
                            buffer_get_position(buffer));
     buffer_free(buffer);
@@ -482,12 +477,38 @@ static PyMethodDef _CMessageMethods[] = {
     {NULL, NULL, 0, NULL}
 };
 
-PyMODINIT_FUNC init_cmessage(void) {
-    PyObject *m;
+static int _cmessage_traverse(PyObject *m, visitproc visit, void *arg) {
+    struct module_state *state = GETSTATE(m);
 
-    m = Py_InitModule("_cmessage", _CMessageMethods);
-    if (m == NULL) {
-        return;
+    Py_VISIT(state->_cbson);
+    return 0;
+}
+
+static int _cmessage_clear(PyObject *m) {
+    struct module_state *state = GETSTATE(m);
+
+    Py_CLEAR(state->_cbson);
+    return 0;
+}
+
+static struct PyModuleDef moduledef = {
+        PyModuleDef_HEAD_INIT,
+        "_cmessage",
+        NULL,
+        sizeof(struct module_state),
+        _CMessageMethods,
+        NULL,
+        _cmessage_traverse,
+        _cmessage_clear,
+        NULL
+};
+
+PyMODINIT_FUNC
+PyInit__cmessage(void)
+{
+    PyObject *module = PyModule_Create(&moduledef);
+    if (module == NULL) {
+        return NULL;
     }
 
     struct module_state *state = GETSTATE(module);
@@ -496,27 +517,29 @@ PyMODINIT_FUNC init_cmessage(void) {
     // of its functions
     state->_cbson = PyImport_ImportModule("bson._cbson");
     if (state->_cbson == NULL) {
-        Py_DECREF(m);
-        return;
+        Py_DECREF(module);
+        return NULL;
     }
 
     // Import C API of _cbson
     // The header file accesses _cbson_API to call the functions
     PyObject *c_api_object = PyObject_GetAttrString(state->_cbson, "_C_API");
     if (c_api_object == NULL) {
-        Py_DECREF(m);
+        Py_DECREF(module);
         Py_DECREF(state->_cbson);
-        return;
+        return NULL;
     }
-    if (PyCObject_Check(c_api_object))
-        _cbson_API = (void **)PyCObject_AsVoidPtr(c_api_object);
-
-    if (_cbson_API == NULL) {
-        Py_DECREF(m);
-        Py_DECREF(c_api_object);
-        Py_DECREF(state->_cbson);
-        return;
+    if (PyCapsule_CheckExact(c_api_object)) {
+        _cbson_API = PyCapsule_GetPointer(c_api_object, "_cbson._C_API");
     }
 
     Py_DECREF(c_api_object);
+
+    if (_cbson_API == NULL) {
+        Py_DECREF(module);
+        Py_DECREF(state->_cbson);
+        return NULL;
+    }
+
+    return module;
 }
