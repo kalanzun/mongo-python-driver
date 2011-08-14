@@ -44,20 +44,9 @@ struct module_state {
     PyTypeObject* REType;
 };
 
-#if PY_MAJOR_VERSION >= 3
 #define GETSTATE(m) ((struct module_state*)PyModule_GetState(m))
-#else
-#define GETSTATE(m) (&_state)
-static struct module_state _state;
-#endif
 
-#if PY_VERSION_HEX < 0x02050000
-#define WARN(category, message)                 \
-    PyErr_Warn((category), (message))
-#else
-#define WARN(category, message)                 \
-    PyErr_WarnEx((category), (message), 1)
-#endif
+#define WARN(category, message) PyErr_WarnEx((category), (message), 1)
 
 /* Maximum number of regex flags */
 #define FLAGS_SIZE 7
@@ -146,19 +135,27 @@ static int buffer_write_bytes(PyObject* self, buffer_t buffer, const char* data,
 
 /* returns 0 on failure */
 static int write_string(PyObject* self, buffer_t buffer, PyObject* py_string) {
-    Py_ssize_t string_length;
-    const char* string = PyString_AsString(py_string);
-    if (!string) {
-        return 1;
+    PyObject* encoded = PyUnicode_AsUTF8String(py_string);
+    if (!encoded) {
+        return 0;
     }
-    string_length = PyString_Size(py_string) + 1;
+
+    const char* string = PyBytes_AsString(encoded);
+    if (!string) {
+        Py_DECREF(encoded);
+        return 0;
+    }
+    Py_ssize_t string_length = PyBytes_Size(encoded) + 1;
 
     if (!buffer_write_bytes(self, buffer, (const char*)&string_length, 4)) {
+        Py_DECREF(encoded);
         return 0;
     }
     if (!buffer_write_bytes(self, buffer, string, string_length)) {
+        Py_DECREF(encoded);
         return 0;
     }
+    Py_DECREF(encoded);
     return 1;
 }
 
@@ -207,17 +204,14 @@ static int _reload_python_objects(PyObject* self) {
         _reload_object(&state->MinKey, "bson.min_key", "MinKey") ||
         _reload_object(&state->MaxKey, "bson.max_key", "MaxKey") ||
         _reload_object(&state->UTC, "bson.tz_util", "utc") ||
-        _reload_object(&state->RECompile, "re", "compile")) {
+        _reload_object(&state->RECompile, "re", "compile") ||
+        _reload_object(&state->UUID, "uuid", "UUID")) {
         return 1;
     }
-    /* If we couldn't import uuid then we must be on 2.4. Just ignore. */
-    if (_reload_object(&state->UUID, "uuid", "UUID") == 1) {
-        state->UUID = NULL;
-        PyErr_Clear();
-    }
+
     /* Reload our REType hack too. */
     state->REType = PyObject_CallFunction(state->RECompile, "O",
-                                          PyString_FromString(""))->ob_type;
+                                          PyBytes_FromString(""))->ob_type;
     return 0;
 }
 
@@ -243,13 +237,12 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
     struct module_state *state = GETSTATE(self);
 
     if (PyBool_Check(value)) {
-        const long bool = PyInt_AsLong(value);
+        const long bool = PyLong_AsLong(value);
         const char c = bool ? 0x01 : 0x00;
         *(buffer_get_buffer(buffer) + type_byte) = 0x08;
         return buffer_write_bytes(self, buffer, &c, 1);
-    }
-    else if (PyInt_Check(value)) {
-        const long long_value = PyInt_AsLong(value);
+    } else if (PyLong_Check(value)) {
+        const long long_value = PyLong_AsLong(value);
         const int int_value = (int)long_value;
         if (PyErr_Occurred() || long_value != int_value) { /* Overflow */
             long long long_long_value;
@@ -346,9 +339,9 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
             return 0;
         }
         {
-            const long long_subtype = PyInt_AsLong(subtype_object);
+            const long long_subtype = PyLong_AsLong(subtype_object);
             const char subtype = (const char)long_subtype;
-            const int length = PyString_Size(value);
+            const int length = PyBytes_Size(value);
 
             Py_DECREF(subtype_object);
             if (subtype == 2) {
@@ -369,7 +362,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
                 }
             }
             {
-                const char* string = PyString_AsString(value);
+                const char* string = PyBytes_AsString(value);
                 if (!string) {
                     return 0;
                 }
@@ -379,7 +372,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
             }
         }
         return 1;
-    } else if (state->UUID && PyObject_IsInstance(value, state->UUID)) {
+    } else if (PyObject_IsInstance(value, state->UUID)) {
         // Just a special case of Binary above, but simpler to do as a separate case
 
         // UUID is always 16 bytes, subtype 3
@@ -396,11 +389,11 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
             return 0;
         }
 
-        bytes = PyObject_GetAttrString(value, "bytes");
+        bytes = PyObject_GetAttrString(value, "bytes_le");
         if (!bytes) {
             return 0;
         }
-        if (!buffer_write_bytes(self, buffer, PyString_AsString(bytes), length)) {
+        if (!buffer_write_bytes(self, buffer, PyBytes_AsString(bytes), length)) {
             Py_DECREF(bytes);
             return 0;
         }
@@ -439,34 +432,26 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
         length = buffer_get_position(buffer) - start_position;
         memcpy(buffer_get_buffer(buffer) + length_location, &length, 4);
         return 1;
-    } else if (PyString_Check(value)) {
-        int result;
-        result_t status;
+    } else if (PyBytes_Check(value)) {
+        // The bytes type is treated as binary of subtype 0
+        Py_ssize_t length = PyBytes_Size(value);
+        const char subtype = 0;
 
-        *(buffer_get_buffer(buffer) + type_byte) = 0x02;
-        status = check_string((const unsigned char*)PyString_AsString(value),
-                              PyString_Size(value), 1, 0);
-        if (status == NOT_UTF_8) {
-            PyObject* InvalidStringData = _error("InvalidStringData");
-            PyErr_SetString(InvalidStringData,
-                            "strings in documents must be valid UTF-8");
-            Py_DECREF(InvalidStringData);
+        *(buffer_get_buffer(buffer) + type_byte) = 0x05;
+        if (!buffer_write_bytes(self, buffer, (const char*)&length, 4)) {
             return 0;
         }
-        result = write_string(self, buffer, value);
-        return result;
+        if (!buffer_write_bytes(self, buffer, &subtype, 1)) {
+            return 0;
+        }
+
+        if (!buffer_write_bytes(self, buffer, PyBytes_AsString(value), length)) {
+            return 0;
+        }
+        return 1;
     } else if (PyUnicode_Check(value)) {
-        PyObject* encoded;
-        int result;
-
         *(buffer_get_buffer(buffer) + type_byte) = 0x02;
-        encoded = PyUnicode_AsUTF8String(value);
-        if (!encoded) {
-            return 0;
-        }
-        result = write_string(self, buffer, encoded);
-        Py_DECREF(encoded);
-        return result;
+        return write_string(self, buffer, value);
     } else if (PyDateTime_Check(value)) {
         long long millis;
         PyObject* utcoffset = PyObject_CallMethod(value, "utcoffset", NULL);
@@ -489,7 +474,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
             return 0;
         }
         {
-            const char* as_string = PyString_AsString(pystring);
+            const char* as_string = PyBytes_AsString(pystring);
             if (!as_string) {
                 Py_DECREF(pystring);
                 return 0;
@@ -522,7 +507,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
         if (!obj) {
             return 0;
         }
-        i = PyInt_AsLong(obj);
+        i = PyLong_AsLong(obj);
         Py_DECREF(obj);
         if (!buffer_write_bytes(self, buffer, (const char*)&i, 4)) {
             return 0;
@@ -532,7 +517,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
         if (!obj) {
             return 0;
         }
-        i = PyInt_AsLong(obj);
+        i = PyLong_AsLong(obj);
         Py_DECREF(obj);
         if (!buffer_write_bytes(self, buffer, (const char*)&i, 4)) {
             return 0;
@@ -540,8 +525,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
 
         *(buffer_get_buffer(buffer) + type_byte) = 0x11;
         return 1;
-    }
-    else if (PyObject_TypeCheck(value, state->REType)) {
+    } else if (PyObject_TypeCheck(value, state->REType)) {
         PyObject* py_flags = PyObject_GetAttrString(value, "flags");
         PyObject* py_pattern;
         PyObject* encoded_pattern;
@@ -555,7 +539,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
         if (!py_flags) {
             return 0;
         }
-        int_flags = PyInt_AsLong(py_flags);
+        int_flags = PyLong_AsLong(py_flags);
         Py_DECREF(py_flags);
         py_pattern = PyObject_GetAttrString(value, "pattern");
         if (!py_pattern) {
@@ -573,8 +557,8 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
             check_utf8 = 1;
         }
 
-        status = check_string((const unsigned char*)PyString_AsString(encoded_pattern),
-                              PyString_Size(encoded_pattern), check_utf8, 1);
+        status = check_string((const unsigned char*)PyBytes_AsString(encoded_pattern),
+                              PyBytes_Size(encoded_pattern), check_utf8, 1);
         if (status == NOT_UTF_8) {
             PyObject* InvalidStringData = _error("InvalidStringData");
             PyErr_SetString(InvalidStringData,
@@ -590,7 +574,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
         }
 
         {
-            const char* pattern =  PyString_AsString(encoded_pattern);
+            const char* pattern =  PyBytes_AsString(encoded_pattern);
             pattern_length = strlen(pattern) + 1;
 
             if (!buffer_write_bytes(self, buffer, pattern, pattern_length)) {
@@ -613,9 +597,6 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
         }
         if (int_flags & 16) {
             STRCAT(flags, FLAGS_SIZE, "s");
-        }
-        if (int_flags & 32) {
-            STRCAT(flags, FLAGS_SIZE, "u");
         }
         if (int_flags & 64) {
             STRCAT(flags, FLAGS_SIZE, "x");
@@ -647,13 +628,15 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
         return write_element_to_buffer(self, buffer, type_byte, value, check_keys, 0);
     }
     {
-        PyObject* errmsg = PyString_FromString("Cannot encode object: ");
+        PyObject* errmsg = PyUnicode_FromString("Cannot encode object: ");
         PyObject* repr = PyObject_Repr(value);
         PyObject* InvalidDocument = _error("InvalidDocument");
-        PyString_ConcatAndDel(&errmsg, repr);
-        PyErr_SetString(InvalidDocument, PyString_AsString(errmsg));
+        PyObject* error = PyUnicode_Concat(errmsg, repr);
+        PyErr_SetObject(InvalidDocument, error);
         Py_DECREF(errmsg);
+        Py_DECREF(repr);
         Py_DECREF(InvalidDocument);
+        Py_DECREF(error);
         return 0;
     }
 }
@@ -663,8 +646,8 @@ static int check_key_name(const char* name,
     int i;
     if (name_length > 0 && name[0] == '$') {
         PyObject* InvalidDocument = _error("InvalidDocument");
-        PyObject* errmsg = PyString_FromFormat("key '%s' must not start with '$'", name);
-        PyErr_SetString(InvalidDocument, PyString_AsString(errmsg));
+        PyObject* errmsg = PyUnicode_FromFormat("key '%s' must not start with '$'", name);
+        PyErr_SetObject(InvalidDocument, errmsg);
         Py_DECREF(errmsg);
         Py_DECREF(InvalidDocument);
         return 0;
@@ -672,8 +655,8 @@ static int check_key_name(const char* name,
     for (i = 0; i < name_length; i++) {
         if (name[i] == '.') {
             PyObject* InvalidDocument = _error("InvalidDocument");
-            PyObject* errmsg = PyString_FromFormat("key '%s' must not contain '.'", name);
-            PyErr_SetString(InvalidDocument, PyString_AsString(errmsg));
+            PyObject* errmsg = PyUnicode_FromFormat("key '%s' must not contain '.'", name);
+            PyErr_SetObject(InvalidDocument, errmsg);
             Py_DECREF(errmsg);
             Py_DECREF(InvalidDocument);
             return 0;
@@ -723,8 +706,8 @@ static int decode_and_write_pair(PyObject* self, buffer_t buffer,
         if (!encoded) {
             return 0;
         }
-        status = check_string((const unsigned char*)PyString_AsString(encoded),
-                              PyString_Size(encoded), 0, 1);
+        status = check_string((const unsigned char*)PyBytes_AsString(encoded),
+                              PyBytes_Size(encoded), 0, 1);
 
         if (status == HAS_NULL) {
             PyObject* InvalidDocument = _error("InvalidDocument");
@@ -733,41 +716,22 @@ static int decode_and_write_pair(PyObject* self, buffer_t buffer,
             Py_DECREF(InvalidDocument);
             return 0;
         }
-    } else if (PyString_Check(key)) {
-        result_t status;
-        encoded = key;
-        Py_INCREF(encoded);
-
-        status = check_string((const unsigned char*)PyString_AsString(encoded),
-                                       PyString_Size(encoded), 1, 1);
-
-        if (status == NOT_UTF_8) {
-            PyObject* InvalidStringData = _error("InvalidStringData");
-            PyErr_SetString(InvalidStringData,
-                            "strings in documents must be valid UTF-8");
-            Py_DECREF(InvalidStringData);
-            return 0;
-        } else if (status == HAS_NULL) {
-            PyObject* InvalidDocument = _error("InvalidDocument");
-            PyErr_SetString(InvalidDocument,
-                            "Key names must not contain the NULL byte");
-            Py_DECREF(InvalidDocument);
-            return 0;
-        }
     } else {
         PyObject* InvalidDocument = _error("InvalidDocument");
-        PyObject* errmsg = PyString_FromString("documents must have only string keys, key was ");
+        PyObject* errmsg = PyUnicode_FromString("documents must have only string keys, key was ");
         PyObject* repr = PyObject_Repr(key);
-        PyString_ConcatAndDel(&errmsg, repr);
-        PyErr_SetString(InvalidDocument, PyString_AsString(errmsg));
+        PyObject* error = PyUnicode_Concat(errmsg, repr);
+        PyErr_SetObject(InvalidDocument, error);
         Py_DECREF(InvalidDocument);
         Py_DECREF(errmsg);
+        Py_DECREF(repr);
+        Py_DECREF(error);
         return 0;
     }
 
     /* If top_level is True, don't allow writing _id here - it was already written. */
-    if (!write_pair(self, buffer, PyString_AsString(encoded),
-                    PyString_Size(encoded), value, check_keys, !top_level)) {
+    if (!write_pair(self, buffer, PyBytes_AsString(encoded),
+                    PyBytes_Size(encoded), value, check_keys, !top_level)) {
         Py_DECREF(encoded);
         return 0;
     }
@@ -785,11 +749,13 @@ static int write_dict(PyObject* self, buffer_t buffer, PyObject* dict, unsigned 
     int length_location;
 
     if (!PyDict_Check(dict)) {
-        PyObject* errmsg = PyString_FromString("encoder expected a mapping type but got: ");
+        PyObject* errmsg = PyUnicode_FromString("encoder expected a mapping type but got: ");
         PyObject* repr = PyObject_Repr(dict);
-        PyString_ConcatAndDel(&errmsg, repr);
-        PyErr_SetString(PyExc_TypeError, PyString_AsString(errmsg));
+        PyObject* error = PyUnicode_Concat(errmsg, repr);
+        PyErr_SetObject(PyExc_TypeError, error);
         Py_DECREF(errmsg);
+        Py_DECREF(repr);
+        Py_DECREF(error);
         return 0;
     }
 
@@ -863,7 +829,7 @@ static PyObject* _cbson_dict_to_bson(PyObject* self, PyObject* args) {
     }
 
     /* objectify buffer */
-    result = Py_BuildValue("s#", buffer_get_buffer(buffer),
+    result = Py_BuildValue("y#", buffer_get_buffer(buffer),
                            buffer_get_position(buffer));
     buffer_free(buffer);
     return result;
@@ -999,49 +965,48 @@ static PyObject* get_value(PyObject* self, const char* buffer, int* position, in
             subtype = (unsigned char)buffer[*position + 4];
 
             if (subtype == 2) {
-                data = PyString_FromStringAndSize(buffer + *position + 9, length - 4);
+                data = PyBytes_FromStringAndSize(buffer + *position + 9, length - 4);
             } else {
-                data = PyString_FromStringAndSize(buffer + *position + 5, length);
+                data = PyBytes_FromStringAndSize(buffer + *position + 5, length);
             }
             if (!data) {
                 return NULL;
             }
 
-            if (subtype == 3 && state->UUID) { // Encode as UUID, not Binary
+            if (subtype == 0) { // Just let bytes be bytes
+                value = data;
+                Py_INCREF(value);
+            } else if (subtype == 3) { // Encode as UUID, not Binary
                 PyObject* kwargs;
                 PyObject* args = PyTuple_New(0);
                 if (!args) {
+                    Py_DECREF(data);
                     return NULL;
                 }
                 kwargs = PyDict_New();
                 if (!kwargs) {
+                    Py_DECREF(data);
                     Py_DECREF(args);
                     return NULL;
                 }
 
                 assert(length == 16); // UUID should always be 16 bytes
 
-                PyDict_SetItemString(kwargs, "bytes", data);
+                PyDict_SetItemString(kwargs, "bytes_le", data);
                 value = PyObject_Call(state->UUID, args, kwargs);
 
                 Py_DECREF(args);
                 Py_DECREF(kwargs);
-                Py_DECREF(data);
-                if (!value) {
+            } else {
+                st = PyLong_FromLong(subtype);
+                if (!st) {
+                    Py_DECREF(data);
                     return NULL;
                 }
-
-                *position += length + 5;
-                break;
+                value = PyObject_CallFunctionObjArgs(state->Binary, data, st, NULL);
+                Py_DECREF(st);
             }
 
-            st = PyInt_FromLong(subtype);
-            if (!st) {
-                Py_DECREF(data);
-                return NULL;
-            }
-            value = PyObject_CallFunctionObjArgs(state->Binary, data, st, NULL);
-            Py_DECREF(st);
             Py_DECREF(data);
             if (!value) {
                 return NULL;
@@ -1061,7 +1026,7 @@ static PyObject* get_value(PyObject* self, const char* buffer, int* position, in
             if (max < 12) {
                 goto invalid;
             }
-            value = PyObject_CallFunction(state->ObjectId, "s#", buffer + *position, 12);
+            value = PyObject_CallFunction(state->ObjectId, "y#", buffer + *position, 12);
             if (!value) {
                 return NULL;
             }
@@ -1230,7 +1195,7 @@ static PyObject* get_value(PyObject* self, const char* buffer, int* position, in
                 goto invalid;
             }
             memcpy(&i, buffer + *position, 4);
-            value = PyInt_FromLong(i);
+            value = PyLong_FromLong(i);
             if (!value) {
                 return NULL;
             }
@@ -1344,11 +1309,11 @@ static PyObject* _cbson_bson_to_dict(PyObject* self, PyObject* args) {
         return NULL;
     }
 
-    if (!PyString_Check(bson)) {
-        PyErr_SetString(PyExc_TypeError, "argument to _bson_to_dict must be a string");
+    if (!PyBytes_Check(bson)) {
+        PyErr_SetString(PyExc_TypeError, "argument to _bson_to_dict must be a bytes object");
         return NULL;
     }
-    total_size = PyString_Size(bson);
+    total_size = PyBytes_Size(bson);
     if (total_size < 5) {
         PyObject* InvalidBSON = _error("InvalidBSON");
         PyErr_SetString(InvalidBSON,
@@ -1357,7 +1322,7 @@ static PyObject* _cbson_bson_to_dict(PyObject* self, PyObject* args) {
         return NULL;
     }
 
-    string = PyString_AsString(bson);
+    string = PyBytes_AsString(bson);
     if (!string) {
         return NULL;
     }
@@ -1383,7 +1348,7 @@ static PyObject* _cbson_bson_to_dict(PyObject* self, PyObject* args) {
     if (!dict) {
         return NULL;
     }
-    remainder = PyString_FromStringAndSize(string + size, total_size - size);
+    remainder = PyBytes_FromStringAndSize(string + size, total_size - size);
     if (!remainder) {
         Py_DECREF(dict);
         return NULL;
@@ -1408,12 +1373,12 @@ static PyObject* _cbson_decode_all(PyObject* self, PyObject* args) {
         return NULL;
     }
 
-    if (!PyString_Check(bson)) {
-        PyErr_SetString(PyExc_TypeError, "argument to decode_all must be a string");
+    if (!PyBytes_Check(bson)) {
+        PyErr_SetString(PyExc_TypeError, "argument to decode_all must be a bytes object");
         return NULL;
     }
-    total_size = PyString_Size(bson);
-    string = PyString_AsString(bson);
+    total_size = PyBytes_Size(bson);
+    string = PyBytes_AsString(bson);
     if (!string) {
         return NULL;
     }
@@ -1462,7 +1427,7 @@ static PyObject* _cbson_decode_all(PyObject* self, PyObject* args) {
 
 static PyMethodDef _CBSONMethods[] = {
     {"_dict_to_bson", _cbson_dict_to_bson, METH_VARARGS,
-     "convert a dictionary to a string containing it's BSON representation."},
+     "convert a dictionary to a string containing its BSON representation."},
     {"_bson_to_dict", _cbson_bson_to_dict, METH_VARARGS,
      "convert a BSON string to a SON object."},
     {"decode_all", _cbson_decode_all, METH_VARARGS,
@@ -1470,25 +1435,71 @@ static PyMethodDef _CBSONMethods[] = {
     {NULL, NULL, 0, NULL}
 };
 
-PyMODINIT_FUNC init_cbson(void) {
-    PyObject *m;
+static int _cbson_traverse(PyObject *m, visitproc visit, void *arg) {
+    struct module_state *state = GETSTATE(m);
 
-    m = Py_InitModule("_cbson", _CBSONMethods);
-    if (m == NULL) {
-        return;
+    Py_VISIT(state->Binary);
+    Py_VISIT(state->Code);
+    Py_VISIT(state->ObjectId);
+    Py_VISIT(state->DBRef);
+    Py_VISIT(state->RECompile);
+    Py_VISIT(state->UUID);
+    Py_VISIT(state->Timestamp);
+    Py_VISIT(state->MinKey);
+    Py_VISIT(state->MaxKey);
+    Py_VISIT(state->UTC);
+    Py_VISIT(state->REType);
+    return 0;
+}
+
+static int _cbson_clear(PyObject *m) {
+    struct module_state *state = GETSTATE(m);
+
+    Py_CLEAR(state->Binary);
+    Py_CLEAR(state->Code);
+    Py_CLEAR(state->ObjectId);
+    Py_CLEAR(state->DBRef);
+    Py_CLEAR(state->RECompile);
+    Py_CLEAR(state->UUID);
+    Py_CLEAR(state->Timestamp);
+    Py_CLEAR(state->MinKey);
+    Py_CLEAR(state->MaxKey);
+    Py_CLEAR(state->UTC);
+    Py_CLEAR(state->REType);
+    return 0;
+}
+
+static struct PyModuleDef moduledef = {
+        PyModuleDef_HEAD_INIT,
+        "_cbson",
+        NULL,
+        sizeof(struct module_state),
+        _CBSONMethods,
+        NULL,
+        _cbson_traverse,
+        _cbson_clear,
+        NULL
+};
+
+PyMODINIT_FUNC
+PyInit__cbson(void)
+{
+    PyObject *module = PyModule_Create(&moduledef);
+    if (module == NULL) {
+        return NULL;
     }
 
     /* Import datetime */
     PyDateTime_IMPORT;
     if (PyDateTimeAPI == NULL) {
-        Py_DECREF(m);
-        return;
+        Py_DECREF(module);
+        return NULL;
     }
 
     /* Import several python objects */
-    if (_reload_python_objects(m)) {
-        Py_DECREF(m);
-        return;
+    if (_reload_python_objects(module)) {
+        Py_DECREF(module);
+        return NULL;
     }
 
     /* Export C API */
@@ -1498,13 +1509,10 @@ PyMODINIT_FUNC init_cbson(void) {
     _cbson_API[_cbson_write_pair_INDEX] = (void *) write_pair;
     _cbson_API[_cbson_decode_and_write_pair_INDEX] = (void *) decode_and_write_pair;
 
-    #if PY_MAJOR_VERSION >= 3
-        PyObject *c_api_object = PyCapsule_New((void *) _cbson_API, "_cbson._C_API", NULL);
-    #else
-        PyObject *c_api_object = PyCObject_FromVoidPtr((void *) _cbson_API, NULL);
-    #endif
-
+    PyObject *c_api_object = PyCapsule_New((void *) _cbson_API, "_cbson._C_API", NULL);
     if (c_api_object != NULL) {
-        PyModule_AddObject(m, "_C_API", c_api_object);
+        PyModule_AddObject(module, "_C_API", c_api_object);
     }
+
+    return module;
 }
