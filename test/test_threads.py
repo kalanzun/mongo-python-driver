@@ -19,7 +19,7 @@ import threading
 
 from nose.plugins.skip import SkipTest
 
-from test_connection import get_connection
+from .test_connection import get_connection
 from pymongo.errors import (AutoReconnect,
                             OperationFailure,
                             DuplicateKeyError)
@@ -35,7 +35,7 @@ class AutoAuthenticateThreads(threading.Thread):
 
     def run(self):
         try:
-            for i in xrange(self.num):
+            for i in range(self.num):
                 self.coll.insert({'num':i}, safe=True)
                 self.coll.find_one({'num':i})
         except Exception:
@@ -64,7 +64,7 @@ class Insert(threading.Thread):
         self.expect_exception = expect_exception
 
     def run(self):
-        for _ in xrange(self.n):
+        for _ in range(self.n):
             error = True
 
             try:
@@ -87,7 +87,7 @@ class Update(threading.Thread):
         self.expect_exception = expect_exception
 
     def run(self):
-        for _ in xrange(self.n):
+        for _ in range(self.n):
             error = True
 
             try:
@@ -124,7 +124,7 @@ class TestThreads(unittest.TestCase):
 
     def test_threading(self):
         self.db.drop_collection("test")
-        for i in xrange(1000):
+        for i in range(1000):
             self.db.test.save({"x": i}, safe=True)
 
         threads = []
@@ -233,7 +233,7 @@ class TestThreadsAuth(unittest.TestCase):
         conn.admin.authenticate("admin-user", "password")
 
         threads = []
-        for _ in xrange(10):
+        for _ in range(10):
             t = AutoAuthenticateThreads(conn.auth_test.test, 100)
             t.start()
             threads.append(t)
@@ -246,7 +246,7 @@ class TestThreadsAuth(unittest.TestCase):
         conn.auth_test.authenticate("test-user", "password")
 
         threads = []
-        for _ in xrange(10):
+        for _ in range(10):
             t = AutoAuthenticateThreads(conn.auth_test.test, 100)
             t.start()
             threads.append(t)

@@ -88,7 +88,8 @@ class TestJsonUtil(unittest.TestCase):
     def test_regex(self):
         res = self.round_tripped({"r": re.compile("a*b", re.IGNORECASE)})["r"]
         self.assertEqual("a*b", res.pattern)
-        self.assertEqual(re.IGNORECASE, res.flags)
+        # UNICODE ist in Python3 stets gesetzt.
+        self.assertEqual(re.IGNORECASE | re.UNICODE, res.flags)
 
     def test_minkey(self):
         self.round_trip({"m": MinKey()})

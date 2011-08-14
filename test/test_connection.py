@@ -114,8 +114,8 @@ class TestConnection(unittest.TestCase):
     def test_database_names(self):
         connection = Connection(self.host, self.port)
 
-        connection.pymongo_test.test.save({"dummy": u"object"})
-        connection.pymongo_test_mike.test.save({"dummy": u"object"})
+        connection.pymongo_test.test.save({"dummy": "object"})
+        connection.pymongo_test_mike.test.save({"dummy": "object"})
 
         dbs = connection.database_names()
         self.assert_("pymongo_test" in dbs)
@@ -127,14 +127,14 @@ class TestConnection(unittest.TestCase):
         self.assertRaises(TypeError, connection.drop_database, 5)
         self.assertRaises(TypeError, connection.drop_database, None)
 
-        connection.pymongo_test.test.save({"dummy": u"object"})
+        connection.pymongo_test.test.save({"dummy": "object"})
         dbs = connection.database_names()
         self.assert_("pymongo_test" in dbs)
         connection.drop_database("pymongo_test")
         dbs = connection.database_names()
         self.assert_("pymongo_test" not in dbs)
 
-        connection.pymongo_test.test.save({"dummy": u"object"})
+        connection.pymongo_test.test.save({"dummy": "object"})
         dbs = connection.database_names()
         self.assert_("pymongo_test" in dbs)
         connection.drop_database(connection.pymongo_test)
@@ -378,13 +378,13 @@ class TestConnection(unittest.TestCase):
 }"""
 
         def get_x(db):
-            return db.test.find().where(where_func).next()["x"]
+            return next(db.test.find().where(where_func))["x"]
         self.assertEqual(1, get_x(no_timeout.pymongo_test))
         self.assertRaises(ConnectionFailure, get_x, timeout.pymongo_test)
 
         def get_x_timeout(db, t):
-            return db.test.find(
-                        network_timeout=t).where(where_func).next()["x"]
+            return next(db.test.find(
+                        network_timeout=t).where(where_func))["x"]
         self.assertEqual(1, get_x_timeout(timeout.pymongo_test, None))
         self.assertRaises(ConnectionFailure, get_x_timeout,
                           no_timeout.pymongo_test, 0.1)
@@ -417,8 +417,8 @@ class TestConnection(unittest.TestCase):
         connection = Connection("mongodb://[::1]:27017/?slaveOk=true")
         connection = Connection("[::1]:27017,localhost:27017")
         connection = Connection("localhost:27017,[::1]:27017")
-        connection.pymongo_test.test.save({"dummy": u"object"})
-        connection.pymongo_test_bernie.test.save({"dummy": u"object"})
+        connection.pymongo_test.test.save({"dummy": "object"})
+        connection.pymongo_test_bernie.test.save({"dummy": "object"})
 
         dbs = connection.database_names()
         self.assert_("pymongo_test" in dbs)
@@ -444,7 +444,7 @@ class TestConnection(unittest.TestCase):
         self.assertTrue(c.is_locked)
         locked = True
         c.unlock()
-        for _ in xrange(5):
+        for _ in range(5):
             locked = c.is_locked
             if not locked:
                 break
