@@ -506,12 +506,14 @@ static struct PyModuleDef moduledef = {
 PyMODINIT_FUNC
 PyInit__cmessage(void)
 {
+    struct module_state *state;
+    PyObject *c_api_object;
     PyObject *module = PyModule_Create(&moduledef);
     if (module == NULL) {
         return NULL;
     }
 
-    struct module_state *state = GETSTATE(module);
+    state = GETSTATE(module);
 
     // Store a reference to the _cbson module since it's needed to call some
     // of its functions
@@ -523,7 +525,7 @@ PyInit__cmessage(void)
 
     // Import C API of _cbson
     // The header file accesses _cbson_API to call the functions
-    PyObject *c_api_object = PyObject_GetAttrString(state->_cbson, "_C_API");
+    c_api_object = PyObject_GetAttrString(state->_cbson, "_C_API");
     if (c_api_object == NULL) {
         Py_DECREF(module);
         Py_DECREF(state->_cbson);

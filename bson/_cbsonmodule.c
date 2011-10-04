@@ -135,17 +135,19 @@ static int buffer_write_bytes(PyObject* self, buffer_t buffer, const char* data,
 
 /* returns 0 on failure */
 static int write_string(PyObject* self, buffer_t buffer, PyObject* py_string) {
+    const char* string;
+    Py_ssize_t string_length;
     PyObject* encoded = PyUnicode_AsUTF8String(py_string);
     if (!encoded) {
         return 0;
     }
 
-    const char* string = PyBytes_AsString(encoded);
+    string = PyBytes_AsString(encoded);
     if (!string) {
         Py_DECREF(encoded);
         return 0;
     }
-    Py_ssize_t string_length = PyBytes_Size(encoded) + 1;
+    string_length = PyBytes_Size(encoded) + 1;
 
     if (!buffer_write_bytes(self, buffer, (const char*)&string_length, 4)) {
         Py_DECREF(encoded);
@@ -1484,6 +1486,8 @@ static struct PyModuleDef moduledef = {
 PyMODINIT_FUNC
 PyInit__cbson(void)
 {
+    static void *_cbson_API[_cbson_API_POINTER_COUNT];
+    PyObject *c_api_object;
     PyObject *module = PyModule_Create(&moduledef);
     if (module == NULL) {
         return NULL;
@@ -1503,13 +1507,12 @@ PyInit__cbson(void)
     }
 
     /* Export C API */
-    static void *_cbson_API[_cbson_API_POINTER_COUNT];
     _cbson_API[_cbson_buffer_write_bytes_INDEX] = (void *) buffer_write_bytes;
     _cbson_API[_cbson_write_dict_INDEX] = (void *) write_dict;
     _cbson_API[_cbson_write_pair_INDEX] = (void *) write_pair;
     _cbson_API[_cbson_decode_and_write_pair_INDEX] = (void *) decode_and_write_pair;
 
-    PyObject *c_api_object = PyCapsule_New((void *) _cbson_API, "_cbson._C_API", NULL);
+    c_api_object = PyCapsule_New((void *) _cbson_API, "_cbson._C_API", NULL);
     if (c_api_object != NULL) {
         PyModule_AddObject(module, "_C_API", c_api_object);
     }
